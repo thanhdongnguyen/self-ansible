@@ -1,0 +1,93 @@
+---
+- name: Deployment Nodejs (Nest Framework) In Ubuntu Server
+  hosts: nodeserver
+  become: true
+
+  vars:
+    node_version: '20.x'
+    repository_url: ""
+    repository_dir: "/noderepo"
+    node_name: "src"
+    pm2_cluster: 3
+    node_port: 3001
+
+  tasks:
+    - name: Update Package
+      apt: 
+        update_cache: true
+
+    - name: Update Root Package 
+      apt: 
+        name: "{{item}}"
+        state: present
+      loop:
+          - curl
+          - tmux
+          - vim
+          - git
+          - nginx
+          - net-tools
+
+    - name: Install Node Lastest Version
+      shell: |
+        curl -sL https://deb.nodesource.com/setup_{{node_version}} | sudo -E bash -
+        sudo apt-get install -y nodejs
+
+    - name: Stop Firewall Ubuntu
+      shell: |
+        systemctl stop ufw
+
+    - name: Install PM2
+      npm: 
+        name: pm2
+        state: present
+        global: yes
+
+    - name: Install Yarn
+      npm: 
+        name: yarn
+        global: yes
+
+    - name: Clone Repo
+      git:
+        repo: "{{repository_url}}"
+        dest: "{{repository_dir}}"
+        version: main
+
+    - name: Install Dependencies
+      yarn:
+        path: "{{repository_dir}}/{{node_name}}"
+        state: present
+
+    - name: Build Project
+      shell: |
+        cd {{repository_dir}} &&  cd {{node_name}} && yarn build
+
+    - name: Start Node With PM2
+      shell: pm2 start -f {{repository_dir}}/{{node_name}}/dist/main.js -i {{pm2_cluster}}
+
+    - name: Configure Nginx
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name _;
+
+              location / {
+                  proxy_pass http://localhost:{{node_port}};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+        dest: /etc/nginx/conf.d/node.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
